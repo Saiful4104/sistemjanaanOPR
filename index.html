@@ -5,7 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Sistem Janaan Laporan Satu Muka Surat (OPR)</title>
 <script src="https://cdn.tailwindcss.com"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <style>
 :root{--teal:#0f766e;--dark:#134e4a;--mint:#ecfdf5}
 body{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
@@ -181,19 +182,51 @@ function updateReport(){
 $('reportForm').addEventListener('submit',e=>{e.preventDefault();clearError();validateDateRange();if(!$('reportForm').reportValidity())return;updateReport();$('previewWrap').scrollIntoView({behavior:'smooth',block:'start'})});
 $('editBtn').onclick=()=>{$('reportForm').scrollIntoView({behavior:'smooth',block:'start'});$('title').focus()};
 $('pdfBtn').onclick=async()=>{
- updateReport();
- if(typeof html2canvas==='undefined'||typeof jspdf==='undefined'){window.print();return}
- const btn=$('pdfBtn');btn.disabled=true;btn.textContent='Menjana PDF...';
- try{
-  const el=$('report');
-  const canvas=await html2canvas(el,{scale:2,useCORS:true,backgroundColor:'#ffffff',scrollY:0,windowWidth:1100});
-  const pdf=new jspdf.jsPDF({orientation:'portrait',unit:'mm',format:'a4',compress:true});
-  const w=210,h=297,ratio=Math.min(w/canvas.width,h/canvas.height);
-  const iw=canvas.width*ratio,ih=canvas.height*ratio;
-  pdf.addImage(canvas.toDataURL('image/jpeg',.94),'JPEG',(w-iw)/2,0,iw,ih);
-  pdf.save(`Laporan_OPR_${(val('title')||'Sekolah').replace(/[^a-z0-9_-]/gi,'_')}.pdf`);
- }catch(e){alert('PDF tidak dapat dijana. Cuba fungsi cetak dan pilih Simpan sebagai PDF.');}
- finally{btn.disabled=false;btn.textContent='↓ PDF'}
+  clearError();
+  updateReport();
+  const btn=$('pdfBtn');
+  btn.disabled=true;
+  btn.textContent='Menjana PDF...';
+  let exportHost=null;
+  try {
+    if(typeof window.html2canvas!=='function' || !window.jspdf?.jsPDF){
+      throw new Error('Pustaka PDF gagal dimuatkan. Semak sambungan internet dan muat semula halaman.');
+    }
+    // Render a visible, off-screen A4 copy. Capturing a hidden element can produce a blank PDF.
+    exportHost=document.createElement('div');
+    exportHost.dataset.oprExportHost='true';
+    exportHost.style.cssText='position:fixed;left:0;top:0;width:210mm;height:297mm;z-index:99999;pointer-events:none;opacity:1;overflow:hidden;';
+    const reportCopy=$('report').cloneNode(true);
+    reportCopy.id='report';
+    reportCopy.style.cssText+=';width:210mm!important;height:297mm!important;min-height:297mm!important;margin:0!important;box-shadow:none!important;';
+    exportHost.appendChild(reportCopy);
+    document.body.appendChild(exportHost);
+    await Promise.all(Array.from(reportCopy.querySelectorAll('img')).map(img=>{
+      if(img.complete)return Promise.resolve();
+      return new Promise(resolve=>{img.onload=resolve;img.onerror=resolve;setTimeout(resolve,5000)});
+    }));
+    if(document.fonts?.ready)await document.fonts.ready;
+    await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+    const canvas=await window.html2canvas(reportCopy,{
+      scale:2,useCORS:true,allowTaint:false,backgroundColor:'#fffefa',
+      scrollX:0,scrollY:0,windowWidth:Math.max(1100,document.documentElement.clientWidth),
+      onclone: doc=>{
+        const host=doc.querySelector('[data-opr-export-host]');
+        if(host){host.style.zIndex='99999';host.style.opacity='1';}
+      }
+    });
+    if(!canvas.width||!canvas.height)throw new Error('Paparan laporan gagal ditangkap.');
+    const pdf=new window.jspdf.jsPDF({orientation:'portrait',unit:'mm',format:'a4',compress:true});
+    pdf.addImage(canvas.toDataURL('image/jpeg',0.94),'JPEG',0,0,210,297);
+    pdf.save(`Laporan_OPR_${(val('title')||'Sekolah').replace(/[^a-z0-9_-]/gi,'_')}.pdf`);
+  }catch(err){
+    console.error('Ralat eksport PDF OPR:',err);
+    showError('PDF tidak berjaya dijana: '+(err.message||'Ralat tidak diketahui')+'. Cuba muat semula halaman.');
+  }finally{
+    if(exportHost)exportHost.remove();
+    btn.disabled=false;
+    btn.textContent='↓ PDF';
+  }
 };
 $('newBtn').onclick=()=>{if(confirm('Mulakan laporan baharu? Maklumat borang dan gambar semasa akan dikosongkan.'))resetAll()};
 $('resetBtn').onclick=()=>{if(confirm('Kosongkan semua ruangan dan gambar?'))resetAll()};
